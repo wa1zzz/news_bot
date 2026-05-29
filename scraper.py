@@ -22,13 +22,24 @@ class Scraper:
         logger.info("Scraper Client successfully authenticated and started.")
 
         # Register message listener
-        @self.client.on(events.NewMessage(chats=self.source_channels))
+        @self.client.on(events.NewMessage())
         async def my_event_handler(event):
             try:
-                # Avoid processing empty or duplicate posts
+                # We only monitor channel posts
+                if not event.is_channel:
+                    return
+                
                 channel_id = event.chat_id
+                chat = await event.get_chat()
+                username = getattr(chat, "username", None)
+                
+                # Dynamically check if this channel is actively monitored
+                if not await db.is_channel_monitored(channel_id, username):
+                    return
+                
                 message_id = event.id
                 
+                # Avoid processing duplicate posts
                 if await db.is_post_processed(channel_id, message_id):
                     logger.debug(f"Post {channel_id}:{message_id} already processed. Skipping.")
                     return

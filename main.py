@@ -59,39 +59,65 @@ async def main():
     api_hash = os.getenv("TELEGRAM_API_HASH")
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
     admin_chat_id_str = os.getenv("ADMIN_CHAT_ID")
+    admin_chat_ids_str = os.getenv("ADMIN_CHAT_IDS", "")
     target_channel_id = os.getenv("TARGET_CHANNEL_ID")
     source_channels_str = os.getenv("SOURCE_CHANNELS", "")
 
-    if not all([api_id_str, api_hash, bot_token, admin_chat_id_str, target_channel_id, source_channels_str]):
+    if not all([api_id_str, api_hash, bot_token, target_channel_id, source_channels_str]) or not (admin_chat_id_str or admin_chat_ids_str):
         logger.error("Missing required environment variables in .env! Check .env.example.")
         return
 
     try:
         api_id = int(api_id_str)
-        admin_chat_id = int(admin_chat_id_str)
     except ValueError:
-        logger.error("TELEGRAM_API_ID and ADMIN_CHAT_ID must be valid integers!")
+        logger.error("TELEGRAM_API_ID must be a valid integer!")
         return
 
-    # Parse target channels
-    source_channels = []
-    for chan in source_channels_str.split(","):
-        chan = chan.strip()
-        if not chan:
-            continue
-        if chan.startswith("-"):
-            try:
-                source_channels.append(int(chan))
-            except ValueError:
-                source_channels.append(chan)
-        else:
-            if chan.startswith("@"):
-                chan = chan[1:]
-            source_channels.append(chan)
+    # Parse and validate admin IDs
+    admin_chat_ids = set()
+    if admin_chat_ids_str:
+        for idx in admin_chat_ids_str.split(","):
+            idx = idx.strip()
+            if idx:
+                try:
+                    admin_chat_ids.add(int(idx))
+                except ValueError:
+                    logger.warning(f"Invalid admin ID in ADMIN_CHAT_IDS: {idx}")
+    elif admin_chat_id_str:
+        try:
+            admin_chat_ids.add(int(admin_chat_id_str))
+        except ValueError:
+            logger.error("ADMIN_CHAT_ID must be a valid integer!")
+            return
 
-    logger.info(f"Monitored source channels: {source_channels}")
+    if not admin_chat_ids:
+        logger.error("No valid admin chat IDs configured in .env!")
+        return
+
+    # Seed monitored channels table if empty
+    try:
+        existing_channels = await db.get_monitored_channels()
+        if not existing_channels and source_channels_str:
+            logger.info("Monitored channels table is empty. Seeding from SOURCE_CHANNELS...")
+            for chan in source_channels_str.split(","):
+                chan = chan.strip()
+                if not chan:
+                    continue
+                if chan.startswith("-"):
+                    try:
+                        chan_id = int(chan)
+                        await db.add_monitored_channel(channel_id=chan_id, username=None, title=f"Seeded Channel {chan_id}")
+                    except ValueError:
+                        await db.add_monitored_channel(channel_id=None, username=chan, title=f"Seeded Channel {chan}")
+                else:
+                    username = chan[1:] if chan.startswith("@") else chan
+                    await db.add_monitored_channel(channel_id=None, username=username, title=f"Seeded {chan}")
+            logger.info("Seeding completed.")
+    except Exception as e:
+        logger.error(f"Error seeding database: {e}")
+
     logger.info(f"Target publishing channel: {target_channel_id}")
-    logger.info(f"Admin moderation chat ID: {admin_chat_id}")
+    logger.info(f"Admin moderation chat IDs: {list(admin_chat_ids)}")
 
     # Initialize Rewriter
     try:
@@ -100,19 +126,20 @@ async def main():
         logger.error(f"Failed to initialize AI Rewriter: {e}")
         return
 
-    # Initialize Moderation Bot
-    moderation_bot = ModerationBot(
-        token=bot_token,
-        admin_chat_id=admin_chat_id,
-        target_channel_id=target_channel_id
-    )
-
-    # Initialize Scraper
+    # Initialize Scraper first so we can pass it to Moderation Bot
     scraper = Scraper(
         api_id=api_id,
         api_hash=api_hash,
-        source_channels=source_channels,
+        source_channels=[], # We now filter dynamically via DB, so source_channels arg is ignored in scraper
         on_new_post_callback=on_new_post_captured
+    )
+
+    # Initialize Moderation Bot with Scraper instance and list of admin IDs
+    moderation_bot = ModerationBot(
+        token=bot_token,
+        admin_chat_ids=list(admin_chat_ids),
+        target_channel_id=target_channel_id,
+        scraper=scraper
     )
 
     # Authenticate Scraper userbot client first to avoid blocking event loop issues

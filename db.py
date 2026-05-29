@@ -28,6 +28,16 @@ async def init_db():
         CREATE UNIQUE INDEX IF NOT EXISTS idx_source_msg 
         ON posts(source_channel_id, source_message_id);
         """)
+        
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS monitored_channels (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel_id INTEGER UNIQUE,
+            username TEXT UNIQUE,
+            title TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """)
         await db.commit()
     logger.info("Database initialized.")
 
@@ -104,3 +114,87 @@ async def get_post_by_moderation_message_id(message_id: int) -> dict:
                 res["media_paths"] = json.loads(res["media_paths"])
                 return res
             return None
+
+async def add_monitored_channel(channel_id: int, username: str, title: str):
+    """Adds a new monitored channel or updates an existing one."""
+    if isinstance(username, str) and username.startswith("@"):
+        username = username[1:]
+    async with aiosqlite.connect(DB_NAME) as db:
+        exists = False
+        if channel_id:
+            async with db.execute("SELECT 1 FROM monitored_channels WHERE channel_id = ?", (channel_id,)) as cursor:
+                exists = await cursor.fetchone() is not None
+        if not exists and username:
+            async with db.execute("SELECT 1 FROM monitored_channels WHERE username = ? COLLATE NOCASE", (username,)) as cursor:
+                exists = await cursor.fetchone() is not None
+        
+        if exists:
+            if channel_id:
+                await db.execute(
+                    "UPDATE monitored_channels SET username = ?, title = ? WHERE channel_id = ?",
+                    (username, title, channel_id)
+                )
+            elif username:
+                await db.execute(
+                    "UPDATE monitored_channels SET channel_id = ?, title = ? WHERE username = ? COLLATE NOCASE",
+                    (channel_id, title, username)
+                )
+        else:
+            await db.execute(
+                "INSERT INTO monitored_channels (channel_id, username, title) VALUES (?, ?, ?)",
+                (channel_id, username, title)
+            )
+        await db.commit()
+
+async def remove_monitored_channel(identifier: str) -> bool:
+    """Removes a channel by username or channel ID. Returns True if deleted."""
+    if isinstance(identifier, str) and identifier.startswith("@"):
+        identifier = identifier[1:]
+    
+    async with aiosqlite.connect(DB_NAME) as db:
+        try:
+            chan_id = int(identifier)
+            cursor = await db.execute("DELETE FROM monitored_channels WHERE channel_id = ?", (chan_id,))
+        except ValueError:
+            cursor = await db.execute("DELETE FROM monitored_channels WHERE username = ? COLLATE NOCASE", (identifier,))
+        
+        await db.commit()
+        return cursor.rowcount > 0
+
+async def get_monitored_channels() -> list:
+    """Returns a list of dicts of all monitored channels."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM monitored_channels ORDER BY created_at DESC") as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+async def is_channel_monitored(channel_id: int, username: str) -> bool:
+    """Checks if a channel_id or username is in the monitored list."""
+    if not channel_id and not username:
+        return False
+    
+    if isinstance(username, str) and username.startswith("@"):
+        username = username[1:]
+        
+    async with aiosqlite.connect(DB_NAME) as db:
+        query = "SELECT 1 FROM monitored_channels WHERE 0=1"
+        params = []
+        if channel_id:
+            query += " OR channel_id = ?"
+            params.append(channel_id)
+        if username:
+            query += " OR username = ? COLLATE NOCASE"
+            params.append(username)
+        
+        async with db.execute(query, tuple(params)) as cursor:
+            res = await cursor.fetchone() is not None
+            return res
+
+async def get_monitored_channel_by_id(channel_id: int) -> dict:
+    """Gets a monitored channel by its numeric ID."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM monitored_channels WHERE channel_id = ?", (channel_id,)) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
