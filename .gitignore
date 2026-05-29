@@ -1,0 +1,25 @@
+# Environment variables
+.env
+
+# Local SQLite databases
+*.db
+*.sqlite
+
+# Telegram session files
+*.session
+*.session-journal
+
+# Downloaded media
+data/media/
+temp/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+
+# OS specific files
+.DS_Store
+Thumbs.db
