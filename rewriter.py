@@ -68,6 +68,44 @@ class GeminiRewriter(BaseRewriter):
             logger.error(f"Gemini API request failed: {e}")
             raise e
 
+class GigaChatRewriter(BaseRewriter):
+    def __init__(self, auth_key: str, scope: str = "GIGACHAT_API_PERS", model: str = "GigaChat", verify_ssl: bool = False, prompt_file: str = "prompt.txt"):
+        self.auth_key = auth_key
+        self.scope = scope
+        self.model = model
+        self.verify_ssl = verify_ssl
+        self.prompt_file = prompt_file
+
+    def _load_prompt(self) -> str:
+        if os.path.exists(self.prompt_file):
+            with open(self.prompt_file, "r", encoding="utf-8") as f:
+                return f.read()
+        return "Перефразируй следующий текст:"
+
+    async def rewrite(self, text: str) -> str:
+        from gigachat import GigaChat
+        system_prompt = self._load_prompt()
+        logger.info("Requesting GigaChat rewrite...")
+        try:
+            payload = {
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": text}
+                ]
+            }
+            async with GigaChat(
+                credentials=self.auth_key,
+                scope=self.scope,
+                model=self.model,
+                verify_ssl_certs=self.verify_ssl
+            ) as client:
+                response = await client.achat(payload)
+                return response.choices[0].message.content.strip()
+        except Exception as e:
+            logger.error(f"GigaChat API request failed: {e}")
+            raise e
+
 def get_rewriter(prompt_file: str = "prompt.txt") -> BaseRewriter:
     """Factory to get the configured rewriter."""
     provider = os.getenv("LLM_PROVIDER", "claude").lower()
@@ -77,6 +115,22 @@ def get_rewriter(prompt_file: str = "prompt.txt") -> BaseRewriter:
         if not api_key:
             raise ValueError("GEMINI_API_KEY must be set when using Gemini provider.")
         return GeminiRewriter(api_key=api_key, prompt_file=prompt_file)
+    elif provider == "gigachat":
+        auth_key = os.getenv("GIGACHAT_AUTH_KEY")
+        if not auth_key:
+            raise ValueError("GIGACHAT_AUTH_KEY must be set when using GigaChat provider.")
+        scope = os.getenv("GIGACHAT_SCOPE", "GIGACHAT_API_PERS")
+        model = os.getenv("GIGACHAT_MODEL", "GigaChat")
+        verify_ssl_str = os.getenv("GIGACHAT_VERIFY_SSL", "true").lower()
+        verify_ssl = verify_ssl_str not in ("false", "0")
+        
+        return GigaChatRewriter(
+            auth_key=auth_key,
+            scope=scope,
+            model=model,
+            verify_ssl=verify_ssl,
+            prompt_file=prompt_file
+        )
     else:
         api_key = os.getenv("ANTHROPIC_API_KEY")
         if not api_key:

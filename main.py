@@ -115,6 +115,11 @@ async def main():
         on_new_post_callback=on_new_post_captured
     )
 
+    # Authenticate Scraper userbot client first to avoid blocking event loop issues
+    logger.info("Starting Scraper authentication...")
+    await scraper.client.start()
+    logger.info("Scraper authenticated successfully.")
+
     # Start both loops concurrently
     logger.info("Launching Scraper and Moderation Bot concurrently...")
     await asyncio.gather(
