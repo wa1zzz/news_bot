@@ -143,7 +143,17 @@ class ModerationBot:
                 media_paths = post["media_paths"]
                 media_type = post["media_type"]
 
-                if media_type == "photo" and media_paths:
+                if len(media_paths) > 1:
+                    media_group = []
+                    for i, path in enumerate(media_paths):
+                        file_input = types.FSInputFile(path)
+                        if media_type == "video" and ("mp4" in path.lower() or "mov" in path.lower()):
+                            item = types.InputMediaVideo(media=file_input, caption=text if i == 0 else None, parse_mode="Markdown")
+                        else:
+                            item = types.InputMediaPhoto(media=file_input, caption=text if i == 0 else None, parse_mode="Markdown")
+                        media_group.append(item)
+                    await self.bot.send_media_group(chat_id=self.target_channel_id, media=media_group)
+                elif media_type == "photo" and media_paths:
                     photo_file = types.FSInputFile(media_paths[0])
                     await self.bot.send_photo(chat_id=self.target_channel_id, photo=photo_file, caption=text)
                 elif media_type == "video" and media_paths:
@@ -251,7 +261,27 @@ class ModerationBot:
         for admin_id in self.admin_chat_ids:
             try:
                 sent_msg = None
-                if media_type == "photo" and media_paths:
+                if len(media_paths) > 1:
+                    media_group = []
+                    for i, path in enumerate(media_paths):
+                        file_input = types.FSInputFile(path)
+                        if media_type == "video" and ("mp4" in path.lower() or "mov" in path.lower()):
+                            item = types.InputMediaVideo(media=file_input, caption=full_caption if i == 0 else None, parse_mode="Markdown")
+                        else:
+                            item = types.InputMediaPhoto(media=file_input, caption=full_caption if i == 0 else None, parse_mode="Markdown")
+                        media_group.append(item)
+                    
+                    # Send media group first (doesn't support inline keyboard)
+                    await self.bot.send_media_group(chat_id=admin_id, media=media_group)
+                    
+                    # Send follow-up command panel containing inline keyboard
+                    sent_msg = await self.bot.send_message(
+                        chat_id=admin_id,
+                        text="⚙️ *Управление альбомом выше:*",
+                        parse_mode="Markdown",
+                        reply_markup=keyboard
+                    )
+                elif media_type == "photo" and media_paths:
                     photo_file = types.FSInputFile(media_paths[0])
                     sent_msg = await self.bot.send_photo(
                         chat_id=admin_id,
@@ -285,4 +315,18 @@ class ModerationBot:
 
     async def start(self):
         logger.info("Starting Moderation Bot...")
+        
+        # Set native bot command menu in the Telegram UI
+        from aiogram.types import BotCommand
+        try:
+            await self.bot.set_my_commands([
+                BotCommand(command="start", description="Запустить бота"),
+                BotCommand(command="list", description="Показать список каналов"),
+                BotCommand(command="add", description="Добавить канал в мониторинг"),
+                BotCommand(command="remove", description="Удалить канал из мониторинга")
+            ])
+            logger.info("Bot commands menu registered successfully.")
+        except Exception as e:
+            logger.error(f"Failed to register bot commands menu: {e}")
+            
         await self.dp.start_polling(self.bot)

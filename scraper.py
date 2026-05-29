@@ -21,6 +21,9 @@ class Scraper:
         await self.client.start()
         logger.info("Scraper Client successfully authenticated and started.")
 
+        # Album cache: grouped_id -> list of messages
+        album_cache = {}
+
         # Register message listener
         @self.client.on(events.NewMessage())
         async def my_event_handler(event):
@@ -36,7 +39,54 @@ class Scraper:
                 # Dynamically check if this channel is actively monitored
                 if not await db.is_channel_monitored(channel_id, username):
                     return
-                
+
+                # Handle media group (album) messages
+                grouped_id = event.message.grouped_id
+                if grouped_id:
+                    if grouped_id not in album_cache:
+                        album_cache[grouped_id] = []
+                        
+                        # Wait for other messages in the album to arrive
+                        await asyncio.sleep(1.5)
+                        
+                        messages = album_cache.pop(grouped_id, [])
+                        if not messages:
+                            return
+                        
+                        # Sort messages by ID to preserve original order
+                        messages.sort(key=lambda m: m.id)
+                        
+                        first_msg_id = messages[0].id
+                        if await db.is_post_processed(channel_id, first_msg_id):
+                            return
+                        
+                        text = ""
+                        media_paths = []
+                        media_type = "none"
+                        
+                        for msg in messages:
+                            if msg.message and not text:
+                                text = msg.message
+                            if msg.media:
+                                path = await msg.download_media(file=MEDIA_DIR)
+                                if path:
+                                    media_paths.append(path)
+                                    # Set type based on media files
+                                    if hasattr(msg.media, 'document') or hasattr(msg.media, 'video'):
+                                        media_type = "video"
+                                    elif hasattr(msg.media, 'photo') and media_type != "video":
+                                        media_type = "photo"
+                                    elif media_type == "none":
+                                        media_type = "document"
+
+                        logger.info(f"New raw post captured (Album) from channel {channel_id}, message ID {first_msg_id}, count: {len(media_paths)}.")
+                        post_id = await db.add_raw_post(channel_id, first_msg_id, text, media_paths, media_type)
+                        asyncio.create_task(self.on_new_post_callback(post_id, text))
+                    
+                    album_cache[grouped_id].append(event.message)
+                    return
+
+                # Normal single message flow
                 message_id = event.id
                 
                 # Avoid processing duplicate posts
