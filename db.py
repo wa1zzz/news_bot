@@ -120,25 +120,42 @@ async def add_monitored_channel(channel_id: int, username: str, title: str):
     if isinstance(username, str) and username.startswith("@"):
         username = username[1:]
     async with aiosqlite.connect(DB_NAME) as db:
-        exists = False
-        if channel_id:
-            async with db.execute("SELECT 1 FROM monitored_channels WHERE channel_id = ?", (channel_id,)) as cursor:
-                exists = await cursor.fetchone() is not None
-        if not exists and username:
-            async with db.execute("SELECT 1 FROM monitored_channels WHERE username = ? COLLATE NOCASE", (username,)) as cursor:
-                exists = await cursor.fetchone() is not None
+        db.row_factory = aiosqlite.Row
         
-        if exists:
-            if channel_id:
+        row_by_id = None
+        if channel_id:
+            async with db.execute("SELECT * FROM monitored_channels WHERE channel_id = ?", (channel_id,)) as cursor:
+                row_by_id = await cursor.fetchone()
+                
+        row_by_name = None
+        if username:
+            async with db.execute("SELECT * FROM monitored_channels WHERE username = ? COLLATE NOCASE", (username,)) as cursor:
+                row_by_name = await cursor.fetchone()
+                
+        if row_by_id and row_by_name:
+            if row_by_id["id"] == row_by_name["id"]:
+                # Same row, just update
                 await db.execute(
-                    "UPDATE monitored_channels SET username = ?, title = ? WHERE channel_id = ?",
-                    (username, title, channel_id)
+                    "UPDATE monitored_channels SET username = ?, title = COALESCE(?, title) WHERE id = ?",
+                    (username, title, row_by_id["id"])
                 )
-            elif username:
+            else:
+                # Merge: update the id row with new info, delete the other row
                 await db.execute(
-                    "UPDATE monitored_channels SET channel_id = ?, title = ? WHERE username = ? COLLATE NOCASE",
-                    (channel_id, title, username)
+                    "UPDATE monitored_channels SET username = ?, title = COALESCE(?, title) WHERE id = ?",
+                    (username, title, row_by_id["id"])
                 )
+                await db.execute("DELETE FROM monitored_channels WHERE id = ?", (row_by_name["id"],))
+        elif row_by_id:
+            await db.execute(
+                "UPDATE monitored_channels SET username = COALESCE(?, username), title = COALESCE(?, title) WHERE id = ?",
+                (username, title, row_by_id["id"])
+            )
+        elif row_by_name:
+            await db.execute(
+                "UPDATE monitored_channels SET channel_id = COALESCE(?, channel_id), title = COALESCE(?, title) WHERE id = ?",
+                (channel_id, title, row_by_name["id"])
+            )
         else:
             await db.execute(
                 "INSERT INTO monitored_channels (channel_id, username, title) VALUES (?, ?, ?)",

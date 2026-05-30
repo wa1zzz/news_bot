@@ -40,6 +40,13 @@ class Scraper:
                 if not await db.is_channel_monitored(channel_id, username):
                     return
 
+                # Auto-update channel details in the database so that its ID, username, and title are correctly resolved
+                title = getattr(chat, "title", None)
+                try:
+                    await db.add_monitored_channel(channel_id=channel_id, username=username, title=title)
+                except Exception as ex:
+                    logger.warning(f"Failed to auto-update monitored channel metadata: {ex}")
+
                 # Handle media group (album) messages
                 grouped_id = event.message.grouped_id
                 if grouped_id:
