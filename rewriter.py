@@ -106,6 +106,40 @@ class GigaChatRewriter(BaseRewriter):
             logger.error(f"GigaChat API request failed: {e}")
             raise e
 
+class DeepSeekRewriter(BaseRewriter):
+    def __init__(self, api_key: str, base_url: str = "https://integrate.api.nvidia.com/v1", model: str = "deepseek-ai/deepseek-v4-pro", prompt_file: str = "prompt.txt"):
+        from openai import AsyncOpenAI
+        self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+        self.model = model
+        self.prompt_file = prompt_file
+
+    def _load_prompt(self) -> str:
+        if os.path.exists(self.prompt_file):
+            with open(self.prompt_file, "r", encoding="utf-8") as f:
+                return f.read()
+        return "Перефразируй следующий текст:"
+
+    async def rewrite(self, text: str) -> str:
+        system_prompt = self._load_prompt()
+        logger.info(f"Requesting DeepSeek rewrite using model {self.model}...")
+        try:
+            completion = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": text}
+                ],
+                temperature=1,
+                top_p=0.95,
+                max_tokens=16384,
+                extra_body={"chat_template_kwargs": {"thinking": False}},
+                stream=False
+            )
+            return completion.choices[0].message.content.strip()
+        except Exception as e:
+            logger.error(f"DeepSeek API request failed: {e}")
+            raise e
+
 def get_rewriter(prompt_file: str = "prompt.txt") -> BaseRewriter:
     """Factory to get the configured rewriter."""
     provider = os.getenv("LLM_PROVIDER", "claude").lower()
@@ -131,6 +165,13 @@ def get_rewriter(prompt_file: str = "prompt.txt") -> BaseRewriter:
             verify_ssl=verify_ssl,
             prompt_file=prompt_file
         )
+    elif provider == "deepseek":
+        api_key = os.getenv("DEEPSEEK_API_KEY")
+        if not api_key:
+            raise ValueError("DEEPSEEK_API_KEY must be set when using DeepSeek provider.")
+        base_url = os.getenv("DEEPSEEK_BASE_URL", "https://integrate.api.nvidia.com/v1")
+        model = os.getenv("DEEPSEEK_MODEL", "deepseek-ai/deepseek-v4-pro")
+        return DeepSeekRewriter(api_key=api_key, base_url=base_url, model=model, prompt_file=prompt_file)
     else:
         api_key = os.getenv("ANTHROPIC_API_KEY")
         if not api_key:

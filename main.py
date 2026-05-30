@@ -1,6 +1,7 @@
 import os
 import asyncio
 import logging
+import re
 from dotenv import load_dotenv
 import db
 from rewriter import get_rewriter
@@ -21,25 +22,84 @@ load_dotenv()
 moderation_bot = None
 rewriter = None
 
+def strip_source_attribution(text: str, source_username: str = None) -> str:
+    """Removes source mentions, Telegram channel links, usernames, and subscribe calls."""
+    if not text:
+        return ""
+    
+    # 1. Remove specific source channel username if provided
+    if source_username:
+        username_clean = source_username.lstrip('@')
+        patterns = [
+            r'(?i)https?://t\.me/' + re.escape(username_clean) + r'\b',
+            r'(?i)t\.me/' + re.escape(username_clean) + r'\b',
+            r'@' + re.escape(username_clean) + r'\b',
+        ]
+        for pattern in patterns:
+            text = re.sub(pattern, '', text)
+            
+    # 2. General Telegram links pointing to channels/posts
+    text = re.sub(r'(?i)https?://t\.me/[a-zA-Z0-9_+]{5,}(/\d+)?', '', text)
+    text = re.sub(r'(?i)\bt\.me/[a-zA-Z0-9_+]{5,}(/\d+)?', '', text)
+    
+    # 3. Common Russian attribution / call-to-action phrases
+    attribution_patterns = [
+        r'(?i)Источник:\s*@[a-zA-Z0-9_+]+',
+        r'(?i)Источник:\s*https?://\S+',
+        r'(?i)Источник:\s*t\.me/\S+',
+        r'(?i)📢\s*Источник:.*$',
+        r'(?i)👉\s*Подписаться.*$',
+        r'(?i)👉\s*Подпишись.*$',
+        r'(?i)Подписаться на канал.*$',
+        r'(?i)Подписывайтесь на\s*@[a-zA-Z0-9_+]+',
+        r'(?i)Подписывайтесь на канал.*$',
+        r'(?i)Подпишись на\s*@[a-zA-Z0-9_+]+',
+        r'(?i)Подпишись на канал.*$',
+        r'(?i)Читать далее.*$',
+        r'(?i)Читать в источнике.*$',
+        r'(?i)Подробнее в источнике.*$',
+        r'(?i)Подробнее на.*$',
+    ]
+    
+    for pattern in attribution_patterns:
+        text = re.sub(pattern, '', text, flags=re.MULTILINE)
+        
+    # Clean up excess newlines and trailing/leading space
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
+
 async def on_new_post_captured(post_id: int, original_text: str):
     """Callback triggered when the scraper intercepts a new post."""
     logger.info(f"Processing rephrase for post ID {post_id}...")
     await db.update_post_status(post_id, "rewriting")
     
+    # Dynamic source channel username lookup
+    source_username = None
+    post = await db.get_post(post_id)
+    if post:
+        source_channel = await db.get_monitored_channel_by_id(post["source_channel_id"])
+        if source_channel:
+            source_username = source_channel["username"]
+            
+    # Pre-clean the text to strip source attributions
+    cleaned_text = strip_source_attribution(original_text, source_username)
+    
     rewritten_text = None
-    if original_text.strip():
+    if cleaned_text.strip():
         try:
             # Rephrase using LLM
-            rewritten_text = await rewriter.rewrite(original_text)
+            rewritten_text = await rewriter.rewrite(cleaned_text)
             logger.info(f"Rephrase completed for post ID {post_id}.")
-            await db.update_post_rewritten_text(post_id, rewritten_text)
         except Exception as e:
-            logger.error(f"Failed to rephrase post {post_id}: {e}. Falling back to original text.")
-            # Resilient fallback: use original text so the user can edit or approve manually
-            rewritten_text = original_text
+            logger.error(f"Failed to rephrase post {post_id}: {e}. Falling back to cleaned text.")
+            # Resilient fallback: use clean text so the user can edit or approve manually
+            rewritten_text = cleaned_text
     else:
-        logger.info(f"Post {post_id} contains no text (media only). Skipping LLM rephrase.")
+        logger.info(f"Post {post_id} contains no text (media only or only signatures).")
         rewritten_text = ""
+
+    # Always write the clean rewritten text (or fallback) to the database
+    await db.update_post_rewritten_text(post_id, rewritten_text)
 
     # Send draft to admin moderation chat
     if moderation_bot:
