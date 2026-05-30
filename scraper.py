@@ -45,6 +45,7 @@ class Scraper:
                 if grouped_id:
                     if grouped_id not in album_cache:
                         album_cache[grouped_id] = []
+                        album_cache[grouped_id].append(event.message)
                         
                         # Wait for other messages in the album to arrive
                         await asyncio.sleep(1.5)
@@ -82,8 +83,8 @@ class Scraper:
                         logger.info(f"New raw post captured (Album) from channel {channel_id}, message ID {first_msg_id}, count: {len(media_paths)}.")
                         post_id = await db.add_raw_post(channel_id, first_msg_id, text, media_paths, media_type)
                         asyncio.create_task(self.on_new_post_callback(post_id, text))
-                    
-                    album_cache[grouped_id].append(event.message)
+                    else:
+                        album_cache[grouped_id].append(event.message)
                     return
 
                 # Normal single message flow
