@@ -39,7 +39,7 @@ class ClaudeRewriter(BaseRewriter):
             raise e
 
 class GeminiRewriter(BaseRewriter):
-    def __init__(self, api_key: str, model_name: str = "gemini-1.5-flash", prompt_file: str = "prompt.txt"):
+    def __init__(self, api_key: str, model_name: str = "gemini-pro", prompt_file: str = "prompt.txt"):
         import google.generativeai as genai
         genai.configure(api_key=api_key)
         self.model_name = model_name
@@ -53,14 +53,22 @@ class GeminiRewriter(BaseRewriter):
 
     async def rewrite(self, text: str) -> str:
         system_prompt = self._load_prompt()
+        full_prompt = f"{system_prompt}\n\nТекст для рерайта:\n{text}"
         logger.info(f"Requesting Gemini rewrite using model {self.model_name}...")
         try:
             import google.generativeai as genai
-            model = genai.GenerativeModel(
-                model_name=self.model_name,
-                system_instruction=system_prompt
-            )
-            response = await model.generate_content_async(text)
+            model = genai.GenerativeModel(model_name=self.model_name)
+            
+            # Check if generate_content_async is supported (resilient fallback)
+            if hasattr(model, "generate_content_async"):
+                response = await model.generate_content_async(full_prompt)
+            else:
+                import asyncio
+                loop = asyncio.get_event_loop()
+                response = await loop.run_in_executor(
+                    None,
+                    lambda: model.generate_content(full_prompt)
+                )
             return response.text.strip()
         except Exception as e:
             logger.error(f"Gemini API request failed: {e}")
@@ -147,7 +155,7 @@ def get_rewriter(prompt_file: str = "prompt.txt") -> BaseRewriter:
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
             raise ValueError("GEMINI_API_KEY must be set when using Gemini provider.")
-        model = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+        model = os.getenv("GEMINI_MODEL", "gemini-pro")
         return GeminiRewriter(api_key=api_key, model_name=model, prompt_file=prompt_file)
     elif provider == "gigachat":
         auth_key = os.getenv("GIGACHAT_AUTH_KEY")
