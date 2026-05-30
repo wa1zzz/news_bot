@@ -1,11 +1,20 @@
 import os
 import logging
+import html
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.filters import Command
 import db
 
 logger = logging.getLogger(__name__)
+
+def escape_markdown(text: str) -> str:
+    """Escapes Markdown V1 special characters."""
+    if not text:
+        return ""
+    for char in ['*', '_', '`', '[']:
+        text = text.replace(char, f'\\{char}')
+    return text
 
 # Active editing states: maps user_id -> post_id
 active_edits = {}
@@ -39,14 +48,14 @@ class ModerationBot:
                 await message.reply("Список отслеживаемых каналов пуст.")
                 return
             
-            reply_lines = ["📋 *Отслеживаемые каналы:*"]
+            reply_lines = ["📋 <b>Отслеживаемые каналы:</b>"]
             for i, ch in enumerate(channels, 1):
-                title = ch["title"] or "Без названия"
-                username = f"@{ch['username']}" if ch["username"] else "приватный"
+                title = html.escape(ch["title"] or "Без названия")
+                username = f"@{html.escape(ch['username'])}" if ch["username"] else "приватный"
                 ch_id = ch["channel_id"]
-                reply_lines.append(f"{i}. *{title}* ({username}, ID: `{ch_id}`)")
+                reply_lines.append(f"{i}. <b>{title}</b> ({username}, ID: <code>{ch_id}</code>)")
             
-            await message.reply("\n".join(reply_lines), parse_mode="Markdown")
+            await message.reply("\n".join(reply_lines), parse_mode="HTML")
 
         @self.dp.message(Command("add"))
         async def add_cmd(message: types.Message):
@@ -98,13 +107,13 @@ class ModerationBot:
                 except Exception as e:
                     logger.debug(f"Could not join channel automatically: {e}")
                 
-                username_str = f" (@{username})" if username else ""
+                username_str = f" (@{html.escape(username)})" if username else ""
                 await status_msg.edit_text(
-                    f"✅ *Канал успешно добавлен!*\n\n"
-                    f"📌 *Название:* {title}\n"
-                    f"🔗 *Ссылка/Юзернейм:* {username_str or 'приватный'}\n"
-                    f"🆔 *ID:* `{signed_id}`",
-                    parse_mode="Markdown"
+                    f"✅ <b>Канал успешно добавлен!</b>\n\n"
+                    f"📌 <b>Название:</b> {html.escape(title)}\n"
+                    f"🔗 <b>Ссылка/Юзернейм:</b> {username_str or 'приватный'}\n"
+                    f"🆔 <b>ID:</b> <code>{signed_id}</code>",
+                    parse_mode="HTML"
                 )
             except Exception as e:
                 logger.error(f"Failed to add channel: {e}", exc_info=True)
@@ -249,8 +258,8 @@ class ModerationBot:
         source_channel = await db.get_monitored_channel_by_id(post["source_channel_id"])
         source_str = ""
         if source_channel:
-            ch_title = source_channel["title"] or "Без названия"
-            ch_username = f"@{source_channel['username']}" if source_channel["username"] else f"ID: {post['source_channel_id']}"
+            ch_title = escape_markdown(source_channel["title"] or "Без названия")
+            ch_username = f"@{escape_markdown(source_channel['username'])}" if source_channel["username"] else f"ID: {post['source_channel_id']}"
             source_str = f"📢 *Источник:* {ch_title} ({ch_username})\n"
         else:
             source_str = f"📢 *Источник:* ID {post['source_channel_id']}\n"
