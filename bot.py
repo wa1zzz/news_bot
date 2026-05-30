@@ -20,12 +20,13 @@ def escape_markdown(text: str) -> str:
 active_edits = {}
 
 class ModerationBot:
-    def __init__(self, token: str, admin_chat_ids: list, target_channel_id: str, scraper=None):
+    def __init__(self, token: str, admin_chat_ids: list, target_channel_id: str, scraper=None, on_new_post_callback=None):
         self.bot = Bot(token=token)
         self.dp = Dispatcher()
         self.admin_chat_ids = admin_chat_ids
         self.target_channel_id = target_channel_id
         self.scraper = scraper
+        self.on_new_post_callback = on_new_post_callback
 
         # Register bot handlers
         self._register_handlers()
@@ -247,7 +248,44 @@ class ModerationBot:
                 # Resend the draft to the admin
                 await self.send_draft(post_id)
             else:
-                await message.reply("Пожалуйста, используйте кнопки под черновиками для управления постами.")
+                # Treat as a new post submission
+                status_msg = await message.reply("⌛ Принято в работу! Загружаю медиа и выполняю рерайт...")
+                try:
+                    media_paths = []
+                    media_type = "none"
+                    
+                    if message.photo:
+                        photo = message.photo[-1]
+                        file_info = await self.bot.get_file(photo.file_id)
+                        os.makedirs("data/media", exist_ok=True)
+                        file_path = os.path.join("data/media", f"admin_{photo.file_id}.jpg")
+                        await self.bot.download_file(file_info.file_path, file_path)
+                        media_paths.append(file_path)
+                        media_type = "photo"
+                    elif message.video:
+                        video = message.video
+                        file_info = await self.bot.get_file(video.file_id)
+                        os.makedirs("data/media", exist_ok=True)
+                        ext = video.file_name.split('.')[-1] if video.file_name and '.' in video.file_name else "mp4"
+                        file_path = os.path.join("data/media", f"admin_{video.file_id}.{ext}")
+                        await self.bot.download_file(file_info.file_path, file_path)
+                        media_paths.append(file_path)
+                        media_type = "video"
+                        
+                    text = message.caption or message.text or ""
+                    
+                    # Add raw post
+                    post_id = await db.add_raw_post(message.chat.id, message.message_id, text, media_paths, media_type)
+                    
+                    # Trigger rephrase and moderation flow
+                    if self.on_new_post_callback:
+                        import asyncio
+                        asyncio.create_task(self.on_new_post_callback(post_id, text))
+                        
+                    await status_msg.edit_text("✅ Пост добавлен в очередь на обработку.")
+                except Exception as e:
+                    logger.error(f"Failed to process manual admin submission: {e}", exc_info=True)
+                    await status_msg.edit_text(f"❌ Ошибка обработки поста: {e}")
 
     async def send_draft(self, post_id: int):
         """Sends a post draft to all admins for manual approval."""
@@ -271,14 +309,17 @@ class ModerationBot:
         ])
 
         # Get source channel details
-        source_channel = await db.get_monitored_channel_by_id(post["source_channel_id"])
         source_str = ""
-        if source_channel:
-            ch_title = escape_markdown(source_channel["title"] or "Без названия")
-            ch_username = f"@{escape_markdown(source_channel['username'])}" if source_channel["username"] else f"ID: {post['source_channel_id']}"
-            source_str = f"📢 *Источник:* {ch_title} ({ch_username})\n"
+        if post["source_channel_id"] in self.admin_chat_ids:
+            source_str = "📢 *Источник:* Добавлен вручную\n"
         else:
-            source_str = f"📢 *Источник:* ID {post['source_channel_id']}\n"
+            source_channel = await db.get_monitored_channel_by_id(post["source_channel_id"])
+            if source_channel:
+                ch_title = escape_markdown(source_channel["title"] or "Без названия")
+                ch_username = f"@{escape_markdown(source_channel['username'])}" if source_channel["username"] else f"ID: {post['source_channel_id']}"
+                source_str = f"📢 *Источник:* {ch_title} ({ch_username})\n"
+            else:
+                source_str = f"📢 *Источник:* ID {post['source_channel_id']}\n"
 
         caption_suffix = f"\n\n{source_str}🔍 *Черновик готов к публикации.*"
         full_caption = text + caption_suffix

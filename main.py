@@ -199,7 +199,8 @@ async def main():
         token=bot_token,
         admin_chat_ids=list(admin_chat_ids),
         target_channel_id=target_channel_id,
-        scraper=scraper
+        scraper=scraper,
+        on_new_post_callback=on_new_post_captured
     )
 
     # Authenticate Scraper userbot client first to avoid blocking event loop issues
