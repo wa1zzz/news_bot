@@ -39,9 +39,10 @@ class ClaudeRewriter(BaseRewriter):
             raise e
 
 class GeminiRewriter(BaseRewriter):
-    def __init__(self, api_key: str, prompt_file: str = "prompt.txt"):
+    def __init__(self, api_key: str, model_name: str = "gemini-1.5-flash", prompt_file: str = "prompt.txt"):
         import google.generativeai as genai
         genai.configure(api_key=api_key)
+        self.model_name = model_name
         self.prompt_file = prompt_file
 
     def _load_prompt(self) -> str:
@@ -52,11 +53,11 @@ class GeminiRewriter(BaseRewriter):
 
     async def rewrite(self, text: str) -> str:
         system_prompt = self._load_prompt()
-        logger.info("Requesting Gemini rewrite...")
+        logger.info(f"Requesting Gemini rewrite using model {self.model_name}...")
         try:
             import google.generativeai as genai
             model = genai.GenerativeModel(
-                model_name="gemini-1.5-flash",
+                model_name=self.model_name,
                 system_instruction=system_prompt
             )
             response = await model.generate_content_async(text)
@@ -146,7 +147,8 @@ def get_rewriter(prompt_file: str = "prompt.txt") -> BaseRewriter:
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
             raise ValueError("GEMINI_API_KEY must be set when using Gemini provider.")
-        return GeminiRewriter(api_key=api_key, prompt_file=prompt_file)
+        model = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+        return GeminiRewriter(api_key=api_key, model_name=model, prompt_file=prompt_file)
     elif provider == "gigachat":
         auth_key = os.getenv("GIGACHAT_AUTH_KEY")
         if not auth_key:
