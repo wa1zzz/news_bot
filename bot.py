@@ -138,7 +138,7 @@ class ModerationBot:
             else:
                 await message.reply(f"❌ Канал *{identifier}* не найден в списке отслеживания.", parse_mode="Markdown")
 
-        @self.dp.message(Command("queue"), Command("q"))
+        @self.dp.message(Command("queue", "q"))
         async def queue_cmd(message: types.Message):
             if message.chat.id not in self.admin_chat_ids:
                 return
@@ -451,7 +451,8 @@ class ModerationBot:
             await self.bot.set_my_commands([
                 BotCommand(command="start", description="Запустить бота"),
                 BotCommand(command="list", description="Показать список каналов"),
-                BotCommand(command="queue", description="Показать очередь обработки"),
+                BotCommand(command="queue", description="Показать очередь обработки (/queue)"),
+                BotCommand(command="q", description="Показать очередь обработки (/q)"),
                 BotCommand(command="add", description="Добавить канал в мониторинг"),
                 BotCommand(command="remove", description="Удалить канал из мониторинга")
             ])
