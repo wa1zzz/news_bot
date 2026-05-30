@@ -42,7 +42,6 @@ class GeminiRewriter(BaseRewriter):
     def __init__(self, api_key: str, prompt_file: str = "prompt.txt"):
         import google.generativeai as genai
         genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel("gemini-1.5-flash")
         self.prompt_file = prompt_file
 
     def _load_prompt(self) -> str:
@@ -53,16 +52,14 @@ class GeminiRewriter(BaseRewriter):
 
     async def rewrite(self, text: str) -> str:
         system_prompt = self._load_prompt()
-        full_prompt = f"{system_prompt}\n\nТекст:\n{text}"
         logger.info("Requesting Gemini rewrite...")
         try:
-            # We run the synchronous call in executor if native async is not preferred
-            import asyncio
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None, 
-                lambda: self.model.generate_content(full_prompt)
+            import google.generativeai as genai
+            model = genai.GenerativeModel(
+                model_name="gemini-1.5-flash",
+                system_instruction=system_prompt
             )
+            response = await model.generate_content_async(text)
             return response.text.strip()
         except Exception as e:
             logger.error(f"Gemini API request failed: {e}")
