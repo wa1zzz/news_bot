@@ -138,6 +138,65 @@ class ModerationBot:
             else:
                 await message.reply(f"❌ Канал *{identifier}* не найден в списке отслеживания.", parse_mode="Markdown")
 
+        @self.dp.message(Command("queue"), Command("q"))
+        async def queue_cmd(message: types.Message):
+            if message.chat.id not in self.admin_chat_ids:
+                return
+            
+            queue_items = await db.get_active_queue()
+            if not queue_items:
+                await message.reply("📥 <b>Очередь обработки пуста.</b>", parse_mode="HTML")
+                return
+            
+            reply_lines = ["📥 <b>Очередь обработки постов:</b>\n"]
+            from datetime import datetime, timezone
+            
+            for i, post in enumerate(queue_items, 1):
+                # Resolve source title and username
+                source_str = "Добавлен вручную"
+                if post["source_channel_id"] not in self.admin_chat_ids:
+                    source_channel = await db.get_monitored_channel_by_id(post["source_channel_id"])
+                    if source_channel:
+                        ch_title = source_channel["title"] or "Без названия"
+                        ch_username = f"@{source_channel['username']}" if source_channel["username"] else f"ID: {post['source_channel_id']}"
+                        source_str = f"{ch_title} ({ch_username})"
+                    else:
+                        source_str = f"Канал ID {post['source_channel_id']}"
+                
+                # Format status
+                status_icon = "⏳ Ожидание" if post["status"] == "new" else "✍️ Рерайтинг AI"
+                
+                # Format time elapsed
+                try:
+                    created_time = datetime.strptime(post["created_at"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                    now_utc = datetime.now(timezone.utc)
+                    delta = now_utc - created_time
+                    seconds = max(0, int(delta.total_seconds()))
+                    
+                    if seconds < 60:
+                        time_str = f"{seconds} сек. назад"
+                    elif seconds < 3600:
+                        time_str = f"{seconds // 60} мин. назад"
+                    else:
+                        time_str = f"{seconds // 3600} ч. назад"
+                except Exception:
+                    time_str = "неизвестно"
+                
+                # Short text preview (first 40 characters)
+                preview = post["original_text"] or ""
+                preview = preview.replace("\n", " ").strip()
+                if len(preview) > 40:
+                    preview = preview[:40] + "..."
+                preview_str = f"«<i>{html.escape(preview)}</i>»" if preview else "<i>[без текста]</i>"
+                
+                reply_lines.append(
+                    f"{i}. <b>{html.escape(source_str)}</b>\n"
+                    f"   Статус: <b>{status_icon}</b> | {time_str}\n"
+                    f"   Превью: {preview_str}\n"
+                )
+            
+            await message.reply("\n".join(reply_lines), parse_mode="HTML")
+
         @self.dp.callback_query(F.data.startswith("publish:"))
         async def handle_publish(callback: types.CallbackQuery):
             post_id = int(callback.data.split(":")[1])
@@ -282,7 +341,11 @@ class ModerationBot:
                         import asyncio
                         asyncio.create_task(self.on_new_post_callback(post_id, text))
                         
-                    await status_msg.edit_text("✅ Пост добавлен в очередь на обработку.")
+                    await status_msg.edit_text(
+                        "✅ <b>Пост добавлен в очередь на обработку.</b>\n"
+                        "Вы можете отслеживать статус обработки с помощью команды /queue или /q.",
+                        parse_mode="HTML"
+                    )
                 except Exception as e:
                     logger.error(f"Failed to process manual admin submission: {e}", exc_info=True)
                     await status_msg.edit_text(f"❌ Ошибка обработки поста: {e}")
@@ -388,6 +451,7 @@ class ModerationBot:
             await self.bot.set_my_commands([
                 BotCommand(command="start", description="Запустить бота"),
                 BotCommand(command="list", description="Показать список каналов"),
+                BotCommand(command="queue", description="Показать очередь обработки"),
                 BotCommand(command="add", description="Добавить канал в мониторинг"),
                 BotCommand(command="remove", description="Удалить канал из мониторинга")
             ])

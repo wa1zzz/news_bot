@@ -215,3 +215,13 @@ async def get_monitored_channel_by_id(channel_id: int) -> dict:
         async with db.execute("SELECT * FROM monitored_channels WHERE channel_id = ?", (channel_id,)) as cursor:
             row = await cursor.fetchone()
             return dict(row) if row else None
+
+async def get_active_queue() -> list:
+    """Returns a list of posts currently in the processing queue (status 'new' or 'rewriting')."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM posts WHERE status IN ('new', 'rewriting') ORDER BY created_at ASC"
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]

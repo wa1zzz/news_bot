@@ -131,9 +131,10 @@ class DeepSeekRewriter(BaseRewriter):
                 ],
                 temperature=1,
                 top_p=0.95,
-                max_tokens=16384,
+                max_tokens=2048,
                 extra_body={"chat_template_kwargs": {"thinking": False}},
-                stream=False
+                stream=False,
+                timeout=30.0
             )
             return completion.choices[0].message.content.strip()
         except Exception as e:
