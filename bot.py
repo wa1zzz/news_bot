@@ -173,12 +173,28 @@ class ModerationBot:
 
                 await db.update_post_status(post_id, "published")
                 
-                # Update moderation message in admin chat
-                await callback.message.edit_reply_markup(reply_markup=None)
+                # Update moderation message in admin chat with multi-publish keyboard
+                multi_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                    [
+                        InlineKeyboardButton(text="✅ Опубликовать еще раз", callback_data=f"publish:{post_id}"),
+                        InlineKeyboardButton(text="✏️ Править", callback_data=f"edit:{post_id}"),
+                    ],
+                    [
+                        InlineKeyboardButton(text="📥 Завершить (Убрать кнопки)", callback_data=f"finish:{post_id}")
+                    ]
+                ])
+                await callback.message.edit_reply_markup(reply_markup=multi_keyboard)
                 await callback.message.reply("✅ Опубликовано в канал!")
             except Exception as e:
                 logger.error(f"Failed to publish post {post_id}: {e}")
                 await callback.message.reply(f"❌ Ошибка публикации: {e}")
+
+        @self.dp.callback_query(F.data.startswith("finish:"))
+        async def handle_finish(callback: types.CallbackQuery):
+            post_id = int(callback.data.split(":")[1])
+            await callback.answer("Модерация завершена.")
+            await callback.message.edit_reply_markup(reply_markup=None)
+            await callback.message.reply("📥 Пост успешно завершен и отправлен в архив.")
 
         @self.dp.callback_query(F.data.startswith("reject:"))
         async def handle_reject(callback: types.CallbackQuery):
