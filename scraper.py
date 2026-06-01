@@ -10,6 +10,20 @@ logger = logging.getLogger(__name__)
 MEDIA_DIR = "data/media"
 os.makedirs(MEDIA_DIR, exist_ok=True)
 
+
+def matched_keywords(text: str, keywords: list) -> list:
+    """Returns the list of keywords found in the text (case-insensitive substring match).
+
+    An empty keyword list means "no filter configured" -> the post is allowed through
+    (returns a sentinel non-empty result so callers treat it as a match).
+    """
+    if not keywords:
+        return ["*"]  # no filter configured -> allow all
+    if not text:
+        return []
+    haystack = text.lower()
+    return [kw for kw in keywords if kw and kw in haystack]
+
 class Scraper:
     def __init__(self, api_id: int, api_hash: str, source_channels: list, on_new_post_callback):
         self.client = TelegramClient("user_session", api_id, api_hash)
@@ -47,6 +61,9 @@ class Scraper:
                 except Exception as ex:
                     logger.warning(f"Failed to auto-update monitored channel metadata: {ex}")
 
+                # Load the active keyword filter once for this post
+                keywords = await db.get_keywords()
+
                 # Handle media group (album) messages
                 grouped_id = event.message.grouped_id
                 if grouped_id:
@@ -67,14 +84,26 @@ class Scraper:
                         first_msg_id = messages[0].id
                         if await db.is_post_processed(channel_id, first_msg_id):
                             return
-                        
+
+                        # Extract the album caption first (text lives on one of the messages)
                         text = ""
-                        media_paths = []
-                        media_type = "none"
-                        
                         for msg in messages:
                             if msg.message and not text:
                                 text = msg.message
+                                break
+
+                        # Keyword filter: skip the whole album (before downloading media) if it doesn't match
+                        hits = matched_keywords(text, keywords)
+                        if not hits:
+                            logger.info(
+                                f"Album {channel_id}:{first_msg_id} skipped — no keyword match (filtered)."
+                            )
+                            return
+
+                        media_paths = []
+                        media_type = "none"
+
+                        for msg in messages:
                             if msg.media:
                                 path = await msg.download_media(file=MEDIA_DIR)
                                 if path:
@@ -87,7 +116,7 @@ class Scraper:
                                     elif media_type == "none":
                                         media_type = "document"
 
-                        logger.info(f"New raw post captured (Album) from channel {channel_id}, message ID {first_msg_id}, count: {len(media_paths)}.")
+                        logger.info(f"New raw post captured (Album) from channel {channel_id}, message ID {first_msg_id}, count: {len(media_paths)}, matched: {hits[:5]}.")
                         post_id = await db.add_raw_post(channel_id, first_msg_id, text, media_paths, media_type)
                         asyncio.create_task(self.on_new_post_callback(post_id, text))
                     else:
@@ -106,6 +135,14 @@ class Scraper:
                 media_paths = []
                 media_type = "none"
 
+                # Keyword filter: skip the post (before downloading media) if it doesn't match
+                hits = matched_keywords(text, keywords)
+                if not hits:
+                    logger.info(
+                        f"Post {channel_id}:{message_id} skipped — no keyword match (filtered)."
+                    )
+                    return
+
                 if event.message.media:
                     logger.info(f"Downloading media for post {message_id}...")
                     # Download media file
@@ -120,9 +157,9 @@ class Scraper:
                         else:
                             media_type = "document"
 
-                logger.info(f"New raw post captured from channel {channel_id}, message ID {message_id}.")
+                logger.info(f"New raw post captured from channel {channel_id}, message ID {message_id}, matched: {hits[:5]}.")
                 post_id = await db.add_raw_post(channel_id, message_id, text, media_paths, media_type)
-                
+
                 # Trigger callback (LLM processing and moderation sending)
                 asyncio.create_task(self.on_new_post_callback(post_id, text))
             except Exception as e:

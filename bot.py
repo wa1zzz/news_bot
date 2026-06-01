@@ -197,6 +197,70 @@ class ModerationBot:
             
             await message.reply("\n".join(reply_lines), parse_mode="HTML")
 
+        @self.dp.message(Command("keywords", "words"))
+        async def keywords_cmd(message: types.Message):
+            if message.chat.id not in self.admin_chat_ids:
+                return
+
+            words = await db.get_keywords()
+            if not words:
+                await message.reply(
+                    "🔑 <b>Список ключевых слов пуст.</b>\n"
+                    "Сейчас фильтр пропускает <b>все</b> посты.\n\n"
+                    "Добавьте слово: <code>/addword vpn</code>",
+                    parse_mode="HTML"
+                )
+                return
+
+            shown = "\n".join(f"• <code>{html.escape(w)}</code>" for w in words)
+            await message.reply(
+                f"🔑 <b>Ключевые слова ({len(words)}):</b>\n{shown}\n\n"
+                f"Пост попадёт на проверку, если содержит хотя бы одно из них.\n"
+                f"<code>/addword слово</code> · <code>/delword слово</code>",
+                parse_mode="HTML"
+            )
+
+        @self.dp.message(Command("addword"))
+        async def addword_cmd(message: types.Message):
+            if message.chat.id not in self.admin_chat_ids:
+                return
+
+            args = message.text.split(maxsplit=1)
+            if len(args) < 2 or not args[1].strip():
+                await message.reply(
+                    "Использование: <code>/addword слово или фраза</code>\n"
+                    "Пример: <code>/addword обход блокировок</code>",
+                    parse_mode="HTML"
+                )
+                return
+
+            word = args[1].strip()
+            added = await db.add_keyword(word)
+            if added:
+                await message.reply(f"✅ Ключевое слово добавлено: <code>{html.escape(word.lower())}</code>", parse_mode="HTML")
+            else:
+                await message.reply(f"ℹ️ Слово <code>{html.escape(word.lower())}</code> уже есть в списке.", parse_mode="HTML")
+
+        @self.dp.message(Command("delword"))
+        async def delword_cmd(message: types.Message):
+            if message.chat.id not in self.admin_chat_ids:
+                return
+
+            args = message.text.split(maxsplit=1)
+            if len(args) < 2 or not args[1].strip():
+                await message.reply(
+                    "Использование: <code>/delword слово или фраза</code>",
+                    parse_mode="HTML"
+                )
+                return
+
+            word = args[1].strip()
+            removed = await db.remove_keyword(word)
+            if removed:
+                await message.reply(f"🗑 Ключевое слово удалено: <code>{html.escape(word.lower())}</code>", parse_mode="HTML")
+            else:
+                await message.reply(f"❌ Слово <code>{html.escape(word.lower())}</code> не найдено в списке.", parse_mode="HTML")
+
         @self.dp.callback_query(F.data.startswith("publish:"))
         async def handle_publish(callback: types.CallbackQuery):
             post_id = int(callback.data.split(":")[1])
@@ -454,7 +518,10 @@ class ModerationBot:
                 BotCommand(command="queue", description="Показать очередь обработки (/queue)"),
                 BotCommand(command="q", description="Показать очередь обработки (/q)"),
                 BotCommand(command="add", description="Добавить канал в мониторинг"),
-                BotCommand(command="remove", description="Удалить канал из мониторинга")
+                BotCommand(command="remove", description="Удалить канал из мониторинга"),
+                BotCommand(command="keywords", description="Показать ключевые слова фильтра"),
+                BotCommand(command="addword", description="Добавить ключевое слово"),
+                BotCommand(command="delword", description="Удалить ключевое слово")
             ])
             logger.info("Bot commands menu registered successfully.")
         except Exception as e:

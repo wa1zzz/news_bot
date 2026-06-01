@@ -38,6 +38,14 @@ async def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         """)
+
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS keywords (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            word TEXT UNIQUE NOT NULL COLLATE NOCASE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """)
         await db.commit()
     logger.info("Database initialized.")
 
@@ -225,3 +233,59 @@ async def get_active_queue() -> list:
         ) as cursor:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
+
+
+# --- Keyword filtering ---
+
+async def get_keywords() -> list:
+    """Returns the list of active keyword strings (lowercased) used to filter posts."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute("SELECT word FROM keywords ORDER BY word ASC") as cursor:
+            rows = await cursor.fetchall()
+            return [row[0] for row in rows]
+
+async def add_keyword(word: str) -> bool:
+    """Adds a keyword. Returns True if inserted, False if it already existed or is empty."""
+    word = (word or "").strip().lower()
+    if not word:
+        return False
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute(
+            "INSERT OR IGNORE INTO keywords (word) VALUES (?)", (word,)
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+async def remove_keyword(word: str) -> bool:
+    """Removes a keyword. Returns True if a row was deleted."""
+    word = (word or "").strip().lower()
+    if not word:
+        return False
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute(
+            "DELETE FROM keywords WHERE word = ? COLLATE NOCASE", (word,)
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+async def seed_default_keywords(words: list) -> int:
+    """Seeds the keywords table with defaults only if it is currently empty.
+
+    Returns the number of keywords inserted (0 if the table was already populated).
+    """
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute("SELECT COUNT(*) FROM keywords") as cursor:
+            count = (await cursor.fetchone())[0]
+        if count > 0:
+            return 0
+        inserted = 0
+        for word in words:
+            word = (word or "").strip().lower()
+            if not word:
+                continue
+            cursor = await db.execute(
+                "INSERT OR IGNORE INTO keywords (word) VALUES (?)", (word,)
+            )
+            inserted += cursor.rowcount
+        await db.commit()
+        return inserted

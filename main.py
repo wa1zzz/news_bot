@@ -22,6 +22,29 @@ load_dotenv()
 moderation_bot = None
 rewriter = None
 
+# Default keyword filter (theme: VPN / blocking / censorship / blocking tech).
+# Seeded into the DB on first run only; afterwards manage live via /addword and /delword.
+DEFAULT_KEYWORDS = [
+    # ВПН и обход блокировок
+    "vpn", "впн", "обход блокиров", "обойти блокиров", "прокси", "proxy",
+    "shadowsocks", "vless", "vmess", "outline", "wireguard", "openvpn",
+    "tor", "тор", "amnezia", "амнезия", "xray", "туннел", "обход dpi", "антицензур",
+    # Блокировки / РКН
+    "роскомнадзор", "ркн", "блокировк", "заблокир", "разблокир", "замедлен",
+    "ограничение доступа", "ограничили доступ", "реестр запрещ", "суверенный интернет",
+    "чёрный список", "черный список", "белый список", "недоступ", "перестал работать",
+    "сбой доступа", "тспу",
+    # Мессенджеры
+    "telegram", "телеграм", "whatsapp", "ватсап", "signal", "сигнал",
+    "discord", "дискорд", "viber", "вайбер", "блокировка звонков", "ограничение звонков",
+    # Цензура и законы
+    "цензур", "запрет", "закон об интернете", "законопроект", "госдума", "минцифры",
+    "штраф за vpn", "реклама vpn", "иноагент", "фильтрация трафика", "маркировка",
+    # Технологии
+    "dpi", "dns", "doh", "dot", "ssl", "tls", "шифрован", "ip-адрес",
+    "протокол", "маршрутизац", "провайдер", "трафик",
+]
+
 def strip_source_attribution(text: str, source_username: str = None) -> str:
     """Removes source mentions, Telegram channel links, usernames, and subscribe calls."""
     if not text:
@@ -113,6 +136,14 @@ async def main():
 
     # Initialize database
     await db.init_db()
+
+    # Seed default keyword filter on first run (no-op if keywords already exist)
+    try:
+        seeded = await db.seed_default_keywords(DEFAULT_KEYWORDS)
+        if seeded:
+            logger.info(f"Seeded {seeded} default keywords for the post filter.")
+    except Exception as e:
+        logger.error(f"Error seeding default keywords: {e}")
 
     # Load and validate settings
     api_id_str = os.getenv("TELEGRAM_API_ID")
